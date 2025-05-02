@@ -97,7 +97,7 @@ This project automates the deployment and configuration of Elasticsearch Cross C
 
 ### Prerequisites
 
-- Terraform installed
+- Terraform installed (version 1.0.0+)
 - Elastic Cloud API key
 
 ### Setup
@@ -109,7 +109,7 @@ This project automates the deployment and configuration of Elasticsearch Cross C
 ### Deployment
 
 ```bash
-# Initialize Terraform
+# Initialize Terraform with required providers
 terraform init
 
 # Review the plan
@@ -118,6 +118,22 @@ terraform plan
 # Apply the configuration
 terraform apply
 ```
+
+### Implementation Approach
+
+This project uses two Terraform providers:
+
+1. **ec** provider (Elastic Cloud provider)
+   - Manages the cloud infrastructure and deployments
+   - Creates and configures the Elasticsearch and Kibana instances
+   - Sets up cross-cluster search connections
+
+2. **elasticstack** provider (Elastic Stack provider) 
+   - Manages configuration within the Elastic Stack
+   - Creates indices, data views, users, and security roles
+   - Configures cross-cluster search permissions
+
+Most operations are handled through native Terraform resources, with only bulk document indexing done via a local-exec provisioner since there's no specific Terraform resource for bulk operations yet.
 
 ### Testing
 
@@ -134,9 +150,42 @@ The script will test:
 - Data view configuration
 - Kibana access for the CCS user
 
+### Expected Test Results
+
+When the test script runs correctly, you should see output similar to the following:
+
+```
+====================================================
+              TEST SUMMARY
+====================================================
+Results from test execution:
+✅ PASS: Index A exists in remote deployment
+✅ PASS: Index B exists in remote deployment
+✅ PASS: Cross Cluster Search works for Index A
+✅ EXPECTED FAILURE: Cross Cluster Search works for Index B (status: 403) - This is correct, as access to Index B should be restricted
+✅ PASS: Wildcard search across all remote indices
+✅ PASS: List all data views
+✅ PASS: Access data view by ID
+✅ PASS: Data View for remote indices exists
+✅ PASS: CCS User has Kibana access
+✅ PASS: Remote cluster connection is established
+
+====================================================
+              OVERALL RESULT
+====================================================
+✅ ALL TESTS PASSED: Elasticsearch Cross Cluster Search is working correctly!
+   Note: 1 test(s) were expected to fail and did fail as intended.
+====================================================
+```
+
+Note that the test for "Cross Cluster Search works for Index B" is expected to fail with a 403 status code. This is by design, as we're intentionally restricting access to Index B through our security configuration.
+
 ## Configuration Files
 
 - `main.tf`: Main Terraform configuration
+  - Cloud deployments using the `ec` provider
+  - Elasticsearch/Kibana configuration using the `elasticstack` provider
+  - Index creation, data views, and security roles
 - `terraform.tfvars.example`: Example variables file
 - `test-ccs-script.sh`: Testing script
 - `.gitignore`: Git ignore file for Terraform

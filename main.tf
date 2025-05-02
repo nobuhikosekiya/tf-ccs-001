@@ -245,62 +245,62 @@ resource "elasticstack_elasticsearch_security_user" "ccs_user" {
   ]
 }
 
-# Null resource for setting up CCS configuration using local-exec provisioner
-resource "null_resource" "setup_cross_cluster_search" {
+# Create index A with mapping
+resource "elasticstack_elasticsearch_index" "index_a" {
+  provider = elasticstack.remote
+  name     = "index_a"
+  
+  # Index mappings
+  mappings = jsonencode({
+    properties = {
+      id          = { type = "keyword" }
+      name        = { type = "text" }
+      description = { type = "text" }
+      tags        = { type = "keyword" }
+      created_at  = { type = "date" }
+    }
+  })
+  
+  # Index settings
+  number_of_shards   = 1
+  number_of_replicas = 1
+  refresh_interval   = "1s"
+  
   depends_on = [
-    ec_deployment.local_deployment,
     ec_deployment.remote_deployment
   ]
+}
 
-  # Provisioner to set up remote cluster connection from local to remote
-  provisioner "local-exec" {
-    command = <<-EOT
-      # Create indexA in local deployment with mapping
-      curl -X PUT "${ec_deployment.remote_deployment.elasticsearch.https_endpoint}/index_a" \
-        -u "elastic:${ec_deployment.remote_deployment.elasticsearch_password}" \
-        -H "Content-Type: application/json" \
-        -d '{
-          "settings": {
-            "number_of_shards": 1,
-            "number_of_replicas": 1
-          },
-          "mappings": {
-            "properties": {
-              "id": { "type": "keyword" },
-              "name": { "type": "text" },
-              "description": { "type": "text" },
-              "tags": { "type": "keyword" },
-              "created_at": { "type": "date" }
-            }
-          }
-        }' >> provision.log
+# Create index B with mapping
+resource "elasticstack_elasticsearch_index" "index_b" {
+  provider = elasticstack.remote
+  name     = "index_b"
+  
+  # Index mappings
+  mappings = jsonencode({
+    properties = {
+      id         = { type = "keyword" }
+      title      = { type = "text" }
+      content    = { type = "text" }
+      category   = { type = "keyword" }
+      published  = { type = "boolean" }
+      updated_at = { type = "date" }
+    }
+  })
+  
+  # Index settings
+  number_of_shards   = 1
+  number_of_replicas = 1
+  refresh_interval   = "1s"
+  
+  depends_on = [
+    ec_deployment.remote_deployment
+  ]
+}
 
-      # Create indexB in local deployment with mapping
-      curl -X PUT "${ec_deployment.remote_deployment.elasticsearch.https_endpoint}/index_b" \
-        -u "elastic:${ec_deployment.remote_deployment.elasticsearch_password}" \
-        -H "Content-Type: application/json" \
-        -d '{
-          "settings": {
-            "number_of_shards": 1,
-            "number_of_replicas": 1
-          },
-          "mappings": {
-            "properties": {
-              "id": { "type": "keyword" },
-              "title": { "type": "text" },
-              "content": { "type": "text" },
-              "category": { "type": "keyword" },
-              "published": { "type": "boolean" },
-              "updated_at": { "type": "date" }
-            }
-          }
-        }' >> provision.log
-      
-      # Add sample documents to indexA
-      curl -X POST "${ec_deployment.remote_deployment.elasticsearch.https_endpoint}/index_a/_bulk" \
-        -u "elastic:${ec_deployment.remote_deployment.elasticsearch_password}" \
-        -H "Content-Type: application/x-ndjson" \
-        --data-binary '
+# Create sample document files
+resource "local_file" "index_a_documents" {
+  content  = <<-EOT
 {"index":{"_id":"1"}}
 {"id":"A001","name":"Product Alpha","description":"This is our flagship product with advanced features","tags":["premium","featured"],"created_at":"2025-01-15T08:30:00Z"}
 {"index":{"_id":"2"}}
@@ -311,13 +311,12 @@ resource "null_resource" "setup_cross_cluster_search" {
 {"id":"A004","name":"Product Delta","description":"Special edition with unique customizations","tags":["limited","exclusive"],"created_at":"2025-04-10T09:00:00Z"}
 {"index":{"_id":"5"}}
 {"id":"A005","name":"Product Epsilon","description":"Professional grade for enterprise users","tags":["enterprise","powerful"],"created_at":"2025-04-25T16:30:00Z"}
-' >> provision.log
-      
-      # Add sample documents to indexB
-      curl -X POST "${ec_deployment.remote_deployment.elasticsearch.https_endpoint}/index_b/_bulk" \
-        -u "elastic:${ec_deployment.remote_deployment.elasticsearch_password}" \
-        -H "Content-Type: application/x-ndjson" \
-        --data-binary '
+EOT
+  filename = "${path.module}/index_a_documents.json"
+}
+
+resource "local_file" "index_b_documents" {
+  content  = <<-EOT
 {"index":{"_id":"1"}}
 {"id":"B001","title":"Confidential Report: Q1 2025","content":"Financial analysis and forecasting for the first quarter","category":"finance","published":false,"updated_at":"2025-01-30T11:00:00Z"}
 {"index":{"_id":"2"}}
@@ -328,8 +327,45 @@ resource "null_resource" "setup_cross_cluster_search" {
 {"id":"B004","title":"New Product Roadmap","content":"Strategic planning for upcoming product launches","category":"product","published":false,"updated_at":"2025-03-25T15:10:00Z"}
 {"index":{"_id":"5"}}
 {"id":"B005","title":"HR Policy Updates","content":"Revised workplace policies and benefits information","category":"hr","published":true,"updated_at":"2025-04-05T10:30:00Z"}
-' >> provision.log
-    EOT
-  }
+EOT
+  filename = "${path.module}/index_b_documents.json"
 }
 
+# Still need to use local-exec provisioner for bulk indexing of sample documents
+# as there isn't a specific Terraform resource for bulk indexing
+resource "null_resource" "index_sample_documents" {
+  depends_on = [
+    elasticstack_elasticsearch_index.index_a,
+    elasticstack_elasticsearch_index.index_b,
+    local_file.index_a_documents,
+    local_file.index_b_documents
+  ]
+
+  # Use bulk API instead of multiple single document indexing
+  provisioner "local-exec" {
+    command = <<-EOT
+      # Bulk index documents to indexA
+      curl -X POST "${ec_deployment.remote_deployment.elasticsearch.https_endpoint}/index_a/_bulk" \
+        -u "elastic:${ec_deployment.remote_deployment.elasticsearch_password}" \
+        -H "Content-Type: application/x-ndjson" \
+        --data-binary "@${path.module}/index_a_documents.json"
+      
+      # Bulk index documents to indexB
+      curl -X POST "${ec_deployment.remote_deployment.elasticsearch.https_endpoint}/index_b/_bulk" \
+        -u "elastic:${ec_deployment.remote_deployment.elasticsearch_password}" \
+        -H "Content-Type: application/x-ndjson" \
+        --data-binary "@${path.module}/index_b_documents.json"
+
+      # Refresh indices to make documents immediately available
+      curl -X POST "${ec_deployment.remote_deployment.elasticsearch.https_endpoint}/index_a,index_b/_refresh" \
+        -u "elastic:${ec_deployment.remote_deployment.elasticsearch_password}" \
+        -H "Content-Type: application/json"
+    EOT
+  }
+  
+  # Add triggers to rerun if documents content changes
+  triggers = {
+    index_a_docs_content = local_file.index_a_documents.content
+    index_b_docs_content = local_file.index_b_documents.content
+  }
+}

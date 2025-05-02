@@ -25,3 +25,7 @@ Thumbs.db
 *.zip
 
 .DS_Store
+
+
+index_a_documents.json
+index_b_documents.json
