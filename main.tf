@@ -265,6 +265,9 @@ resource "elasticstack_elasticsearch_index" "index_a" {
   number_of_shards   = 1
   number_of_replicas = 1
   refresh_interval   = "1s"
+
+  # Enable deletion protection (set to false to allow terraform to delete the index)
+  deletion_protection = false
   
   depends_on = [
     ec_deployment.remote_deployment
@@ -292,6 +295,9 @@ resource "elasticstack_elasticsearch_index" "index_b" {
   number_of_shards   = 1
   number_of_replicas = 1
   refresh_interval   = "1s"
+  
+  # Enable deletion protection (set to false to allow terraform to delete the index)
+  deletion_protection = false
   
   depends_on = [
     ec_deployment.remote_deployment
