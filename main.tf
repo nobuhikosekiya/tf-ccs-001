@@ -2,13 +2,40 @@ terraform {
   required_providers {
     ec = {
       source  = "elastic/ec"
-      version = ">= 0.5.0"
+      version = "~> 0.12.0"
+    }
+    elasticstack = {
+      source = "elastic/elasticstack",
+      version = "~> 0.11.0"
     }
   }
 }
 
 provider "ec" {
   apikey = var.elastic_api_key
+}
+
+provider "elasticstack" {
+  elasticsearch {
+    username  = ec_deployment.local_deployment.elasticsearch_username
+    password  = ec_deployment.local_deployment.elasticsearch_password
+    endpoints = [ec_deployment.local_deployment.elasticsearch.https_endpoint]
+  }
+  kibana {
+    username  = ec_deployment.local_deployment.elasticsearch_username
+    password  = ec_deployment.local_deployment.elasticsearch_password
+    endpoints = [ec_deployment.local_deployment.kibana.https_endpoint]
+  }
+}
+
+# Provider configuration for the remote deployment
+provider "elasticstack" {
+  alias = "remote"
+  elasticsearch {
+    username  = ec_deployment.remote_deployment.elasticsearch_username
+    password  = ec_deployment.remote_deployment.elasticsearch_password
+    endpoints = [ec_deployment.remote_deployment.elasticsearch.https_endpoint]
+  }
 }
 
 # Variables
@@ -38,7 +65,7 @@ variable "ccs_user_password" {
 }
 
 variable "ccs_user_name" {
-  description = "User name for the cross cluster search user"
+  description = "Username for the cross cluster search user"
   type        = string
   default     = "ccs_user"
 }
@@ -105,6 +132,10 @@ output "local_elasticsearch_endpoint" {
   value = ec_deployment.local_deployment.elasticsearch.https_endpoint
 }
 
+output "local_kibana_endpoint" {
+  value = ec_deployment.local_deployment.kibana.https_endpoint
+}
+
 output "local_elasticsearch_password" {
   value = ec_deployment.local_deployment.elasticsearch_password
   sensitive = true
@@ -133,6 +164,85 @@ output "ccs_user_password" {
   value = var.ccs_user_password
   description = "Password for the cross cluster search user"
   sensitive = true
+}
+# Create Kibana data view for remote indices
+resource "elasticstack_kibana_data_view" "remote_all_indices" {
+    data_view = {
+        id             = "remote_all_indices"
+        name           = "All Remote Indices"
+        title          = "remote-cluster:*"
+        time_field_name = "created_at"
+    }
+    # This resource depends on the remote and local deployments being created first
+    depends_on = [
+        ec_deployment.local_deployment,
+        ec_deployment.remote_deployment
+    ]
+}
+
+      # Set up remote role for cross-cluster search with access to all indices
+resource "elasticstack_elasticsearch_security_role" "remote_search_all" {
+  provider = elasticstack.remote
+  name     = "remote-search-all"
+  
+  indices {
+    names      = ["*"]
+    privileges = ["read", "read_cross_cluster"]
+  }
+  
+  depends_on = [
+    ec_deployment.remote_deployment
+  ]
+}
+
+# Set up remote role for single index access (keeping for compatibility)
+resource "elasticstack_elasticsearch_security_role" "remote_search_a" {
+  provider = elasticstack.remote
+  name     = "remote-search-a"
+  
+  indices {
+    names      = ["index_a"]
+    privileges = ["read", "read_cross_cluster"]
+  }
+  
+  depends_on = [
+    ec_deployment.remote_deployment
+  ]
+}
+
+resource "elasticstack_kibana_security_role" "kibana_ccs_user" {
+  name = "kibana-ccs-user"
+  elasticsearch {
+    cluster = ["monitor"]
+    indices {
+      names      = ["remote-cluster:*"]
+      privileges = ["read", "view_index_metadata"]
+    }
+  }
+  kibana {
+    base   = ["read"]
+    spaces = ["default"]
+  }
+  depends_on = [
+    ec_deployment.local_deployment
+  ]
+}
+
+# Create a user with the CCS roles
+resource "elasticstack_elasticsearch_security_user" "ccs_user" {
+  username  = var.ccs_user_name
+  password  = var.ccs_user_password
+  roles     = [
+    elasticstack_elasticsearch_security_role.remote_search_a.name,
+    elasticstack_kibana_security_role.kibana_ccs_user.name
+  ]
+  full_name = "Cross Cluster Search User"
+  email     = "ccs@example.com"
+  
+  depends_on = [
+    elasticstack_elasticsearch_security_role.remote_search_a,
+    elasticstack_kibana_security_role.kibana_ccs_user
+  ]
 }
 
 # Null resource for setting up CCS configuration using local-exec provisioner
@@ -219,69 +329,7 @@ resource "null_resource" "setup_cross_cluster_search" {
 {"index":{"_id":"5"}}
 {"id":"B005","title":"HR Policy Updates","content":"Revised workplace policies and benefits information","category":"hr","published":true,"updated_at":"2025-04-05T10:30:00Z"}
 ' >> provision.log
-
-      # Create a dataview for all remote indices
-      curl -X PUT "${ec_deployment.local_deployment.elasticsearch.https_endpoint}/_data_view/remote_all_indices" \
-        -u "elastic:${ec_deployment.local_deployment.elasticsearch_password}" \
-        -H "Content-Type: application/json" \
-        -d '{
-          "title": "remote-cluster:*",
-          "name": "All Remote Indices",
-          "timeFieldName": "created_at"
-        }' >> provision.log
-
-      # Set up local role for kibana access and cross-cluster search
-      curl -X PUT "${ec_deployment.local_deployment.elasticsearch.https_endpoint}/_security/role/kibana-ccs-user" \
-        -u "elastic:${ec_deployment.local_deployment.elasticsearch_password}" \
-        -H "Content-Type: application/json" \
-        -d '{
-          "cluster": [
-            "monitor"
-          ],
-          "indices": [
-            {
-              "names": ["remote-cluster:*"],
-              "privileges": ["read", "view_index_metadata"]
-            }
-          ],
-          "applications": [
-            {
-              "application": "kibana-.kibana",
-              "privileges": ["read", "space_read"],
-              "resources": ["*"]
-            }
-          ]
-        }' >> provision.log
-
-      # Set up remote role for cross-cluster search
-      curl -X PUT "${ec_deployment.remote_deployment.elasticsearch.https_endpoint}/_security/role/remote-search-a" \
-        -u "elastic:${ec_deployment.remote_deployment.elasticsearch_password}" \
-        -H "Content-Type: application/json" \
-        -d '{
-          "indices": [
-            {
-              "names": ["index_a"],
-              "privileges": ["read", "read_cross_cluster"]
-            }
-          ]
-        }' >> provision.log
-
-      # Set up local role for cross-cluster search
-      curl -X PUT "${ec_deployment.local_deployment.elasticsearch.https_endpoint}/_security/role/remote-search-a" \
-        -u "elastic:${ec_deployment.local_deployment.elasticsearch_password}" \
-        -H "Content-Type: application/json" \
-        -d '{}' >> provision.log
-
-      # Create a user with the CCS role
-      curl -X PUT "${ec_deployment.local_deployment.elasticsearch.https_endpoint}/_security/user/${var.ccs_user_name}" \
-        -u "elastic:${ec_deployment.local_deployment.elasticsearch_password}" \
-        -H "Content-Type: application/json" \
-        -d '{
-          "password": "${var.ccs_user_password}",
-          "roles": ["remote-search-a, kibana-ccs-user"],
-          "full_name": "Cross Cluster Search User",
-          "email": "ccs@example.com"
-        }' >> provision.log
     EOT
   }
 }
+
