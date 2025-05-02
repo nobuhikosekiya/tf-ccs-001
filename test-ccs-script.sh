@@ -6,19 +6,23 @@
 LOCAL_ENDPOINT=$(terraform output -raw local_elasticsearch_endpoint)
 REMOTE_ENDPOINT=$(terraform output -raw remote_elasticsearch_endpoint)
 
-# For sensitive outputs, you need to explicitly output them
-# These commands will prompt for confirmation since they expose sensitive values
+# Load credentials from Terraform outputs
 echo "Running terraform output commands for passwords. You will need to confirm each one:"
 LOCAL_PASSWORD=$(terraform output -raw local_elasticsearch_password)
 REMOTE_PASSWORD=$(terraform output -raw remote_elasticsearch_password)
+CCS_USER=$(terraform output -raw ccs_user_username)
+CCS_PASSWORD=$(terraform output -raw ccs_user_password)
 
 # Alternative method if you don't want to use terraform output for passwords:
 # Uncomment and set these manually if needed
 # LOCAL_PASSWORD="your-local-deployment-password"
 # REMOTE_PASSWORD="your-remote-deployment-password"
+# CCS_USER="ccs_user"
+# CCS_PASSWORD="StrongPassword123!"
 
 echo "Local Elasticsearch Endpoint: $LOCAL_ENDPOINT"
 echo "Remote Elasticsearch Endpoint: $REMOTE_ENDPOINT"
+echo "CCS User: $CCS_USER"
 
 # 1. Verify indexA in local deployment
 echo -e "\n--- Verifying indexA in local deployment ---"
@@ -47,7 +51,7 @@ curl -s -X GET "$REMOTE_ENDPOINT/index_b/_search?pretty" \
 # 3. Test Cross Cluster Search for indexA (should succeed)
 echo -e "\n--- Testing Cross Cluster Search for indexA (should succeed) ---"
 curl -s -X GET "$LOCAL_ENDPOINT/remote-cluster:index_a/_search?pretty" \
-  -u "ccs_user:StrongPassword123!" \
+  -u "$CCS_USER:$CCS_PASSWORD" \
   -H "Content-Type: application/json" \
   -d '{
     "query": {
@@ -59,7 +63,7 @@ curl -s -X GET "$LOCAL_ENDPOINT/remote-cluster:index_a/_search?pretty" \
 # 4. Test Cross Cluster Search for indexB (should fail with permissions error)
 echo -e "\n--- Testing Cross Cluster Search for indexB (should fail with permissions error) ---"
 curl -s -X GET "$LOCAL_ENDPOINT/remote-cluster:index_b/_search?pretty" \
-  -u "ccs_user:StrongPassword123!" \
+  -u "$CCS_USER:$CCS_PASSWORD" \
   -H "Content-Type: application/json" \
   -d '{
     "query": {

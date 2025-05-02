@@ -1,2 +1,4 @@
 region = "us-west-2"
 elastic_api_key       = ""
+ccs_user_name = "ccs_user"
+ccs_user_password = "StrongPassword123!"

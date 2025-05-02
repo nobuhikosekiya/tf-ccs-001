@@ -30,6 +30,19 @@ variable "elasticsearch_version" {
   default     = "8.17.4"
 }
 
+variable "ccs_user_password" {
+  description = "Password for the cross cluster search user"
+  type        = string
+  default     = "StrongPassword123!"
+  sensitive   = true
+}
+
+variable "ccs_user_name" {
+  description = "User name for the cross cluster search user"
+  type        = string
+  default     = "ccs_user"
+}
+
 # Local deployment
 resource "ec_deployment" "local_deployment" {
   name = "local-deployment"
@@ -107,6 +120,18 @@ output "remote_elasticsearch_endpoint" {
 
 output "remote_elasticsearch_password" {
   value = ec_deployment.remote_deployment.elasticsearch_password
+  sensitive = true
+}
+
+# CCS user credentials output
+output "ccs_user_username" {
+  value = var.ccs_user_name
+  description = "Username for the cross cluster search user"
+}
+
+output "ccs_user_password" {
+  value = var.ccs_user_password
+  description = "Password for the cross cluster search user"
   sensitive = true
 }
 
@@ -195,6 +220,39 @@ resource "null_resource" "setup_cross_cluster_search" {
 {"id":"B005","title":"HR Policy Updates","content":"Revised workplace policies and benefits information","category":"hr","published":true,"updated_at":"2025-04-05T10:30:00Z"}
 ' >> provision.log
 
+      # Create a dataview for all remote indices
+      curl -X PUT "${ec_deployment.local_deployment.elasticsearch.https_endpoint}/_data_view/remote_all_indices" \
+        -u "elastic:${ec_deployment.local_deployment.elasticsearch_password}" \
+        -H "Content-Type: application/json" \
+        -d '{
+          "title": "remote-cluster:*",
+          "name": "All Remote Indices",
+          "timeFieldName": "created_at"
+        }' >> provision.log
+
+      # Set up local role for kibana access and cross-cluster search
+      curl -X PUT "${ec_deployment.local_deployment.elasticsearch.https_endpoint}/_security/role/kibana-ccs-user" \
+        -u "elastic:${ec_deployment.local_deployment.elasticsearch_password}" \
+        -H "Content-Type: application/json" \
+        -d '{
+          "cluster": [
+            "monitor"
+          ],
+          "indices": [
+            {
+              "names": ["remote-cluster:*"],
+              "privileges": ["read", "view_index_metadata"]
+            }
+          ],
+          "applications": [
+            {
+              "application": "kibana-.kibana",
+              "privileges": ["read", "space_read"],
+              "resources": ["*"]
+            }
+          ]
+        }' >> provision.log
+        
       # Set up remote role for cross-cluster search
       curl -X PUT "${ec_deployment.remote_deployment.elasticsearch.https_endpoint}/_security/role/remote-search-a" \
         -u "elastic:${ec_deployment.remote_deployment.elasticsearch_password}" \
@@ -215,11 +273,11 @@ resource "null_resource" "setup_cross_cluster_search" {
         -d '{}' >> provision.log
 
       # Create a user with the CCS role
-      curl -X PUT "${ec_deployment.local_deployment.elasticsearch.https_endpoint}/_security/user/ccs_user" \
+      curl -X PUT "${ec_deployment.local_deployment.elasticsearch.https_endpoint}/_security/user/${var.ccs_user_name}" \
         -u "elastic:${ec_deployment.local_deployment.elasticsearch_password}" \
         -H "Content-Type: application/json" \
         -d '{
-          "password": "StrongPassword123!",
+          "password": "${var.ccs_user_password}",
           "roles": ["remote-search-a"],
           "full_name": "Cross Cluster Search User",
           "email": "ccs@example.com"
