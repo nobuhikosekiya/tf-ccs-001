@@ -252,7 +252,7 @@ resource "null_resource" "setup_cross_cluster_search" {
             }
           ]
         }' >> provision.log
-        
+
       # Set up remote role for cross-cluster search
       curl -X PUT "${ec_deployment.remote_deployment.elasticsearch.https_endpoint}/_security/role/remote-search-a" \
         -u "elastic:${ec_deployment.remote_deployment.elasticsearch_password}" \
@@ -278,7 +278,7 @@ resource "null_resource" "setup_cross_cluster_search" {
         -H "Content-Type: application/json" \
         -d '{
           "password": "${var.ccs_user_password}",
-          "roles": ["remote-search-a"],
+          "roles": ["remote-search-a, kibana-ccs-user"],
           "full_name": "Cross Cluster Search User",
           "email": "ccs@example.com"
         }' >> provision.log
