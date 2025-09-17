@@ -51,10 +51,16 @@ variable "region" {
   default     = "us-east-1"
 }
 
-variable "elasticsearch_version" {
+variable "local_elasticsearch_version" {
   description = "Elasticsearch version"
   type        = string
   default     = "8.17.4"
+}
+
+variable "remote_elasticsearch_version" {
+  description = "Elasticsearch version"
+  type        = string
+  default     = "8.16.1"
 }
 
 variable "ccs_user_password" {
@@ -74,7 +80,7 @@ variable "ccs_user_name" {
 resource "ec_deployment" "local_deployment" {
   name = "local-deployment"
   region = var.region
-  version = var.elasticsearch_version
+  version = var.local_elasticsearch_version
   deployment_template_id = "aws-storage-optimized"
 
   elasticsearch = {
@@ -106,7 +112,7 @@ resource "ec_deployment" "local_deployment" {
 resource "ec_deployment" "remote_deployment" {
   name = "remote-deployment"
   region = var.region
-  version = var.elasticsearch_version
+  version = var.remote_elasticsearch_version
   deployment_template_id = "aws-storage-optimized"
 
   elasticsearch = {
@@ -203,6 +209,17 @@ resource "elasticstack_elasticsearch_security_role" "remote_search_a" {
   indices {
     names      = ["index_a"]
     privileges = ["read", "read_cross_cluster"]
+    field_security {
+      grant = ["description", "created_at", "tags", "name", "id"]
+      except = ["id", "created_at"]
+    }
+    query = <<-EOT
+    {
+      "match": {
+          "tags": "enterprise"
+      }
+    }
+    EOT
   }
   
   depends_on = [
@@ -302,6 +319,62 @@ resource "elasticstack_elasticsearch_index" "index_b" {
   depends_on = [
     ec_deployment.remote_deployment
   ]
+}
+
+resource "elasticstack_elasticsearch_security_api_key" "remote_api_key" {
+  provider = elasticstack.remote
+  # Set the name
+  name = "remote cluster API key"
+
+  # Set the role descriptors
+  # role_descriptors = jsonencode({
+  #   role-a = {
+  #     cluster = ["all"],
+  #   }
+  # })
+
+  # Set the expiration for the API key
+  expiration = "1d"
+
+  # Set the custom metadata for this user
+  metadata = jsonencode({
+    "env"    = "testing"
+    "open"   = false
+    "number" = 49
+  })
+}
+
+
+resource "elasticstack_elasticsearch_security_api_key" "local_api_key" {
+  # Set the name
+  name = "local cluster API key"
+
+  # # Set the role descriptors
+  # role_descriptors = jsonencode({
+  #   role-a = {
+  #     cluster = ["all"],
+  #   }
+  # })
+
+  # Set the expiration for the API key
+  expiration = "1d"
+
+  # Set the custom metadata for this user
+  metadata = jsonencode({
+    "env"    = "testing"
+    "open"   = false
+    "number" = 49
+  })
+}
+
+output "local_api_key" {
+  value     = elasticstack_elasticsearch_security_api_key.local_api_key
+  sensitive = true
+}
+
+output "remote_api_key" {
+  value     = elasticstack_elasticsearch_security_api_key.remote_api_key
+  sensitive = true
 }
 
 # Create sample document files
