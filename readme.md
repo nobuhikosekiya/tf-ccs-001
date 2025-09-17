@@ -1,6 +1,6 @@
 # Elasticsearch Cross Cluster Search (CCS) with Terraform
 
-This project automates the deployment and configuration of Elasticsearch Cross Cluster Search (CCS) using Terraform with the Elastic Cloud provider. It creates a complete setup with two Elastic deployments, index creation, data loading, and security configuration.
+This project automates the deployment and configuration of Elasticsearch Cross Cluster Search (CCS) using Terraform with the Elastic Cloud provider. It creates a complete setup with two Elastic deployments, index creation, data loading, and security configuration with field and document level security.
 
 ## Architecture Overview
 
@@ -35,6 +35,7 @@ This project automates the deployment and configuration of Elasticsearch Cross C
          |    - Kibana Access       |
          |    - Cross Cluster Role  |
          |    - Data View           |
+         |    - Field/Doc Security  |
          +--------------------------+
 ```
 
@@ -76,7 +77,9 @@ This project automates the deployment and configuration of Elasticsearch Cross C
 ### Security
 
 1. **Roles**
-   - `remote-search-a`: Access to index_a only
+   - `remote-search-a`: Access to index_a only with field and document level security
+     - **Field Level Security**: Grants access to `["description", "created_at", "tags", "name", "id"]` but excludes `["id", "created_at"]`
+     - **Document Level Security**: Only returns documents where `tags` field matches "enterprise"
    - `remote-search-all`: Access to all indices on remote cluster
    - `kibana-ccs-user`: Role for Kibana access and using CCS
 
@@ -84,13 +87,35 @@ This project automates the deployment and configuration of Elasticsearch Cross C
    - `ccs_user`: User with credentials defined in Terraform
    - Assigned roles: `remote-search-a` and `kibana-ccs-user`
    - Access to Kibana and ability to perform cross-cluster search
+   - **Limited Access**: Due to field and document level security, this user will only see:
+     - Documents in index_a that have the tag "enterprise"
+     - Only the fields: `description`, `tags`, and `name` (excluding `id` and `created_at`)
+
+### Security Features
+
+This implementation demonstrates advanced Elasticsearch security features:
+
+1. **Field Level Security (FLS)**
+   - Controls which fields users can access within documents
+   - Configured to grant access to specific fields while explicitly denying others
+   - Example: User can see `description` and `tags` but not `id` or `created_at`
+
+2. **Document Level Security (DLS)**
+   - Controls which documents users can access based on query criteria
+   - Configured with a query that only returns documents with `"tags": "enterprise"`
+   - Acts as a filter applied to all search requests
+
+3. **Cross-Cluster Security**
+   - Security settings are enforced across cluster boundaries
+   - Remote cluster respects the security configuration of the querying user
+   - Provides secure data access across distributed Elasticsearch deployments
 
 ### Data Views
 
 1. **Remote All Indices**
    - Name: "All Remote Indices"
    - Pattern: `remote-cluster:*`
-   - Access to all indices in the remote cluster
+   - Access to all indices in the remote cluster (subject to security restrictions)
    - Time field: `created_at`
 
 ## Getting Started
@@ -132,6 +157,7 @@ This project uses two Terraform providers:
    - Manages configuration within the Elastic Stack
    - Creates indices, data views, users, and security roles
    - Configures cross-cluster search permissions
+   - Implements field and document level security
 
 Most operations are handled through native Terraform resources, with only bulk document indexing done via a local-exec provisioner since there's no specific Terraform resource for bulk operations yet.
 
@@ -149,6 +175,7 @@ The script will test:
 - Access to all indices via wildcard patterns
 - Data view configuration
 - Kibana access for the CCS user
+- **Security restrictions**: Field and document level security enforcement
 
 ### Expected Test Results
 
@@ -178,17 +205,53 @@ Results from test execution:
 ====================================================
 ```
 
-Note that the test for "Cross Cluster Search works for Index B" is expected to fail with a 403 status code. This is by design, as we're intentionally restricting access to Index B through our security configuration.
+### Security Testing Notes
+
+- The test for "Cross Cluster Search works for Index B" is expected to fail with a 403 status code, as we're intentionally restricting access to Index B through our security configuration.
+- When testing Index A access, you'll only see documents that have the tag "enterprise" due to document level security.
+- The returned documents will only show fields: `description`, `tags`, and `name` due to field level security (excluding `id` and `created_at`).
 
 ## Configuration Files
 
 - `main.tf`: Main Terraform configuration
   - Cloud deployments using the `ec` provider
   - Elasticsearch/Kibana configuration using the `elasticstack` provider
-  - Index creation, data views, and security roles
+  - Index creation, data views, and security roles with field and document level security
 - `terraform.tfvars.example`: Example variables file
 - `test-ccs-script.sh`: Testing script
 - `.gitignore`: Git ignore file for Terraform
+
+## Security Configuration Details
+
+The `remote_search_a` role implements both field and document level security:
+
+```hcl
+resource "elasticstack_elasticsearch_security_role" "remote_search_a" {
+  provider = elasticstack.remote
+  name     = "remote-search-a"
+  
+  indices {
+    names      = ["index_a"]
+    privileges = ["read", "read_cross_cluster"]
+    field_security {
+      grant = ["description", "created_at", "tags", "name", "id"]
+      except = ["id", "created_at"]
+    }
+    query = <<-EOT
+    {
+      "match": {
+          "tags": "enterprise"
+      }
+    }
+    EOT
+  }
+}
+```
+
+This configuration:
+- Grants access to specific fields but excludes sensitive ones
+- Filters documents to only show those with "enterprise" tags
+- Applies these restrictions across cross-cluster search operations
 
 ## Outputs
 
@@ -220,3 +283,17 @@ To access Kibana with the CCS user:
 
 3. Navigate to the "Discover" tab in Kibana
 4. Select the "All Remote Indices" data view to explore data from the remote cluster
+5. **Note**: Due to security restrictions, you'll only see:
+   - Documents from index_a that have the "enterprise" tag
+   - Limited fields: `description`, `tags`, and `name`
+
+## Security Best Practices Demonstrated
+
+This project showcases several Elasticsearch security best practices:
+
+1. **Principle of Least Privilege**: Users only have access to data they need
+2. **Field Level Security**: Sensitive fields are hidden from users
+3. **Document Level Security**: Only relevant documents are accessible
+4. **Role-Based Access Control**: Different roles for different access levels
+5. **Cross-Cluster Security**: Security policies enforced across deployments
+6. **API Key Management**: Secure authentication using API keys
